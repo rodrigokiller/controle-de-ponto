@@ -1,11 +1,11 @@
 require 'rails_helper'
 
 describe AccountPresenter do
-  let!(:account) { create(:account_sequence) }
-  let!(:day)  { create(:day_record, account: account) }
+  let!(:account) { create(:account) }
   let!(:base_time) { Time.zone.local(1999, 8, 1).change(hour: 0, minute: 0) }
-  let!(:time_1) { create(:time_record, time: base_time.change(hour:  8, min: 5), day_record: day) }
-  let!(:time_2) { create(:time_record, time: base_time.change(hour: 12, min: 1), day_record: day) }
+  let!(:time_1) { build(:time_record, time: base_time.change(hour:  8, min: 5)) }
+  let!(:time_2) { build(:time_record, time: base_time.change(hour: 12, min: 1)) }
+  let!(:day)  { create(:day_record, account: account, time_records: [time_1, time_2]) }
   let!(:account_presenter) { AccountPresenter.new(account) }
 
   describe '#total_balance' do
@@ -33,9 +33,9 @@ describe AccountPresenter do
   end
 
   describe '#next_entrance_time' do
-    let!(:new_account) { create(:account_sequence) }
+    let!(:new_account) { create(:account) }
     let!(:current_day) { create(:day_record, account: new_account) }
-    let!(:presenter) { AccountPresenter.new(new_account) }
+    let(:presenter) { AccountPresenter.new(new_account) }
 
     context 'when there is no day record for today' do
       it { expect(presenter.next_entrance_time).to be_nil }
@@ -46,14 +46,19 @@ describe AccountPresenter do
     end
 
     context 'when records exists' do
-      let!(:time) { create(:time_record, time: base_time.change(hour: 12, min: 0), day_record: current_day) }
+      let(:time) { build(:time_record, time: base_time.change(hour: 12, min: 0)) }
+
+      before do
+        current_day.time_records += [time]
+        current_day.save
+      end
 
       it { expect(presenter.next_entrance_time).to eq base_time.change(hour: 23, min: 0) }
     end
   end
 
   describe '#total_earned' do
-    let!(:self_emp_account) { create(:self_employed_account_sequence, hourly_rate: 0) }
+    let!(:self_emp_account) { create(:self_employed_account, hourly_rate: 0) }
     let!(:day) { create(:day_record, account: self_emp_account) }
     let!(:presenter) { AccountPresenter.new(self_emp_account) }
 
@@ -62,10 +67,15 @@ describe AccountPresenter do
     end
 
     context 'when hourly_rate is greater than 0' do
-      let!(:time_1) { create(:time_record, time: base_time.change(hour: 12, min: 0), day_record: day) }
-      let!(:time_2) { create(:time_record, time: base_time.change(hour: 14, min: 1), day_record: day) }
+      let!(:time_1) { build(:time_record, time: base_time.change(hour: 12, min: 0)) }
+      let!(:time_2) { build(:time_record, time: base_time.change(hour: 14, min: 1)) }
 
-      before { self_emp_account.hourly_rate = 30; self_emp_account.save! }
+      before do
+        self_emp_account.hourly_rate = 30
+        self_emp_account.save!
+        day.time_records += [time_1, time_2]
+        day.save
+      end
 
       it { expect(presenter.total_earned).to eq 60.50 }
     end

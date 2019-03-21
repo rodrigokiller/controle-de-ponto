@@ -6,8 +6,8 @@ class DayRecord < ActiveRecord::Base
   enumerize :missed_day, in: { yes: 1, no: 0 }, default: :no
   enumerize :medical_certificate, in: { yes: 1, no: 0 }, default: :no
 
-  belongs_to :account, touch: true
-  has_many :time_records, dependent: :delete_all
+  belongs_to :account
+  has_many :time_records, inverse_of: :day_record, dependent: :delete_all
 
   accepts_nested_attributes_for :time_records, reject_if: :all_blank, allow_destroy: true
 
@@ -22,7 +22,12 @@ class DayRecord < ActiveRecord::Base
   scope :date_range, -> (from, to) { where(reference_date: from..to) }
 
   after_initialize :set_default_values
+
+  before_save :set_calculated_columns
+  after_save :touch_account
   after_save :touch_closure_if_needed
+
+  after_destroy :touch_account
 
   def self.max_time_count_for_account(account)
     where(account: account)
@@ -66,9 +71,31 @@ class DayRecord < ActiveRecord::Base
   end
 
   def calculate_total_worked_hours
-    return ZERO_HOUR if time_records.empty?
+    return calculated_hours unless reference_date.today? && time_records_odd?
 
-    sum_current_time_to_total(time_records.last.time, calculate_hours)
+    newest_time = time_records.last
+
+    return ZERO_HOUR if newest_time.nil?
+
+    # sum the difference between last time entry and current time
+    # to show up-to-now calculation
+    now_diff = Time.diff(newest_time.time, Time.current)
+    (calculated_hours + now_diff[:hour].hours) + now_diff[:minute].minutes
+  end
+
+  def satisfy_conditions(worked, record_index)
+    return true if worked && record_index.odd?
+    return true if !worked && record_index.even?
+    false
+  end
+
+  def future_reference_date
+    return unless reference_date
+    errors.add(:reference_date, :future_date) if reference_date.future?
+  end
+
+  def set_default_values
+    self.reference_date ||= Date.current
   end
 
   def calculate_hours(worked_hours = true)
@@ -86,25 +113,13 @@ class DayRecord < ActiveRecord::Base
     total
   end
 
-  def satisfy_conditions(worked, record_index)
-    return true if worked && record_index.odd?
-    return true if !worked && record_index.even?
-    false
+  def set_calculated_columns
+    self.calculated_hours = calculate_hours
+    self.time_records_odd = time_records.size.odd?
   end
 
-  def sum_current_time_to_total(last_time_record, total)
-    return total unless reference_date.today? && time_records.size.odd?
-    now_diff = Time.diff(last_time_record, Time.current)
-    (total + now_diff[:hour].hours) + now_diff[:minute].minutes
-  end
-
-  def future_reference_date
-    return unless reference_date
-    errors.add(:reference_date, :future_date) if reference_date.future?
-  end
-
-  def set_default_values
-    self.reference_date ||= Date.current
+  def touch_account
+    account.touch
   end
 
   def touch_closure_if_needed
